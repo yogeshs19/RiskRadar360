@@ -1,5 +1,5 @@
 
-# streamlit_app.py — RiskRadar360 (Right‑Panel Intelligence Edition)
+# streamlit_app.py — RiskRadar360 (Right‑Panel Intelligence Edition, L/I labels updated)
 import os, re, datetime, math
 import streamlit as st
 import pandas as pd
@@ -72,13 +72,6 @@ def plot_heatmap(rows, title="Risk Matrix (Likelihood × Impact)"):
     ax.set_xticklabels(["Impact 1","Impact 2","Impact 3"])
     ax.set_yticklabels(["Lik 1","Lik 2","Lik 3"])
     ax.set_title(title)
-    st.pyplot(fig)
-
-def plot_defects_bar(def_counts):
-    fig, ax = plt.subplots()
-    labels = list(def_counts.keys()); values = [def_counts[k] for k in labels]
-    ax.bar(labels, values)
-    ax.set_title("Defects snapshot")
     st.pyplot(fig)
 
 def plot_scatter(rows, title="Risk Scatter (L vs I)"):
@@ -176,8 +169,8 @@ def assess_tab(tab_name: str):
                 ans = cols[0].radio(question, ["Yes","No"], index=default_index, horizontal=True, key=key_for(tab_name, rname))
                 item_L, item_I = L, I
                 if show_adv:
-                    item_L = cols[1].selectbox("L", [1,2,3], index=L-1, key=key_for(tab_name, rname+"_L"))
-                    item_I = cols[2].selectbox("I", [1,2,3], index=I-1, key=key_for(tab_name, rname+"_I"))
+                    item_L = cols[1].selectbox("Likelihood (L)", [1,2,3], index=L-1, key=key_for(tab_name, rname+"_L"))
+                    item_I = cols[2].selectbox("Impact (I)", [1,2,3], index=I-1, key=key_for(tab_name, rname+"_I"))
                 evidence = cols[3].text_input("Evidence / link (optional)", key=key_for(tab_name, rname+"_evi"))
                 is_risk = (ans == "No") if default_yes else (ans == "Yes")
                 likelihood = int(item_L) if is_risk else 1
@@ -197,22 +190,19 @@ def assess_tab(tab_name: str):
     # RIGHT — intelligence panel
     with right:
         st.markdown("### Intelligence Panel")
-        # Release Tracker (ValueEdge or similar)
+        # Release Tracker
         st.markdown("##### Release tracker")
         rel_url = st.text_input("Release link (ValueEdge / Jira / other)", key=key_for(tab_name, "rel_url"))
         rel_status = st.selectbox("Gate status", ["Unknown","Draft","In progress","Ready","Blocked"], index=0, key=key_for(tab_name, "rel_status"))
         rel_date = st.date_input("Planned release date", key=key_for(tab_name, "rel_date"))
         st.caption("Link and status help reviewers validate scope & timing gates.")
         if rel_status in ["Unknown","Blocked"]:
-            # add risk
-            rname = "Release tracker unclear/blocked"
-            cat = "Release"
-            L, I = (2,3) if rel_status=="Unknown" else (3,3)
-            base_score = L*I
-            weighted_score = base_score * weights.get(cat, 1.0)
+            rname = "Release tracker unclear/blocked"; cat = "Release"
+            L2, I2 = (2,3) if rel_status=="Unknown" else (3,3)
+            base_score = L2*I2; weighted_score = base_score * weights.get(cat, 1.0)
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                "category": cat, "risk_name": rname, "likelihood": L, "impact": I, "score": base_score,
+                "category": cat, "risk_name": rname, "likelihood": L2, "impact": I2, "score": base_score,
                 "weighted_score": weighted_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
             })
             categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
@@ -225,22 +215,20 @@ def assess_tab(tab_name: str):
         sev_c = dcols[1].number_input("Critical", 0, 999, 0, key=key_for(tab_name, "def_critical"))
         sev_mj = dcols[2].number_input("Major", 0, 999, 0, key=key_for(tab_name, "def_major"))
         sev_mn = dcols[3].number_input("Minor", 0, 999, 0, key=key_for(tab_name, "def_minor"))
-        def_counts = {"Blocker":sev_b, "Critical":sev_c, "Major":sev_mj, "Minor":sev_mn}
-        plot_defects_bar(def_counts)
         defect_score = sev_b*6 + sev_c*4 + sev_mj*2 + sev_mn*1
         if defect_score >= 12:
             cat = "Quality Metrics"; rname = "High defect load"
-            L, I = (3,3) if sev_b>0 or sev_c>2 else (2,3)
-            base_score = L*I; weighted_score = base_score * weights.get(cat, 1.0)
+            L3, I3 = (3,3) if sev_b>0 or sev_c>2 else (2,3)
+            base_score = L3*I3; weighted_score = base_score * weights.get(cat, 1.0)
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                "category": cat, "risk_name": rname, "likelihood": L, "impact": I, "score": base_score,
-                "weighted_score": weighted_score, "mitigation": "Focus on blocker/critical burndown; triage; freeze risky areas", "evidence": str(def_counts), "assessor": assessor
+                "category": cat, "risk_name": rname, "likelihood": L3, "impact": I3, "score": base_score,
+                "weighted_score": weighted_score, "mitigation": "Focus blocker/critical burndown; triage; freeze risky areas", "evidence": f"B:{sev_b} C:{sev_c} Mj:{sev_mj} Mn:{sev_mn}", "assessor": assessor
             })
             categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
             red_flags.append((rname, cat, base_score, "Blocker/critical burndown"))
 
-        # Process clarifications / gates
+        # Process gates
         st.markdown("##### Process gates")
         g1 = st.checkbox("String freeze declared", key=key_for(tab_name, "gate_freeze"))
         g2 = st.checkbox("Pseudolocalization passed", key=key_for(tab_name, "gate_pseudo"))
@@ -249,23 +237,21 @@ def assess_tab(tab_name: str):
         g5 = st.checkbox("Font/glyph readiness verified", key=key_for(tab_name, "gate_font"))
         g6 = st.checkbox("Locale list finalized & vendor aligned", key=key_for(tab_name, "gate_locales"))
         g7 = st.checkbox("Legal/brand review complete", key=key_for(tab_name, "gate_legal"))
-        # any missing gate => risk
         gates = {"String freeze":g1,"Pseudolocalization":g2,"ICU/plurals":g3,"RTL/BiDi":g4,"Font/glyph":g5,"Locales finalized":g6,"Legal/brand":g7}
         for gate_name, ok in gates.items():
             if not ok:
-                cat = "Process"
+                cat = "Process"; L4, I4 = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
+                base_score = L4*I4; weighted_score = base_score * weights.get(cat, 1.0)
                 rname = f"Gate missing: {gate_name}"
-                L, I = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
-                base_score = L*I; weighted_score = base_score * weights.get(cat, 1.0)
                 risk_rows.append({
                     "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                    "category": cat, "risk_name": rname, "likelihood": L, "impact": I, "score": base_score,
+                    "category": cat, "risk_name": rname, "likelihood": L4, "impact": I4, "score": base_score,
                     "weighted_score": weighted_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
                 })
                 categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
                 if base_score >= 6: red_flags.append((rname, cat, base_score, f"Complete {gate_name}"))
 
-        # Useful links
+        # Links
         st.markdown("##### Links & artifacts")
         st.text_input("Git/Gerrit repo URL", key=key_for(tab_name, "link_repo"))
         st.text_input("CI pipeline URL", key=key_for(tab_name, "link_ci"))
@@ -276,7 +262,6 @@ def assess_tab(tab_name: str):
     total_score = sum(r["score"] for r in risk_rows)
     max_cell = max((r["score"] for r in risk_rows), default=0)
     rating = score_to_rating(total_score, max_cell)
-
     badge = f"<span class='rr-badge {rating.lower()}'>{rating}</span>"
     st.markdown(f"### Summary {badge}", unsafe_allow_html=True)
     k1, k2, k3 = st.columns(3)
@@ -284,10 +269,23 @@ def assess_tab(tab_name: str):
     k2.markdown(f"<div class='rr-card'><div class='rr-muted'>High‑risk items (≥7)</div><div class='rr-metric'>{sum(1 for r in risk_rows if r['score']>=7)}</div></div>", unsafe_allow_html=True)
     k3.markdown(f"<div class='rr-card'><div class='rr-muted'>Weighted score</div><div class='rr-metric'>{int(sum(r['weighted_score'] for r in risk_rows))}</div></div>", unsafe_allow_html=True)
 
-    cA, cB = st.columns(2)
-    with cA: plot_heatmap(risk_rows)
-    with cB: plot_scatter(risk_rows)
+    # Quick visuals
+    fig1, ax1 = plt.subplots()
+    grid = [[0,0,0],[0,0,0],[0,0,0]]
+    for r in risk_rows:
+        L = int(r["likelihood"])-1; I = int(r["impact"])-1
+        if 0 <= L < 3 and 0 <= I < 3: grid[L][I] += 1
+    ax1.imshow(grid)
+    for i in range(3):
+        for j in range(3):
+            ax1.text(j, i, str(grid[i][j]), ha="center", va="center")
+    ax1.set_xticks([0,1,2]); ax1.set_yticks([0,1,2])
+    ax1.set_xticklabels(["Impact 1","Impact 2","Impact 3"])
+    ax1.set_yticklabels(["Lik 1","Lik 2","Lik 3"])
+    ax1.set_title("Risk Matrix (Likelihood × Impact)")
+    st.pyplot(fig1)
 
+    # Red Flags
     st.markdown("### 🔴 Red Flags (auto)")
     if red_flags:
         for name, cat, s, mit in sorted(red_flags, key=lambda x: x[2], reverse=True)[:5]:
@@ -299,7 +297,6 @@ def assess_tab(tab_name: str):
     cols = ["project_name","version","assessment_date","tab","category","risk_name","likelihood","impact","score","weighted_score","mitigation","evidence","assessor"]
     df = pd.DataFrame(risk_rows, columns=cols)
     st.dataframe(df, use_container_width=True)
-
     if project and version and not df.empty:
         path = save_results_csv(project, version, tab_name, df)
         st.download_button("⬇️ Download CSV", data=df.to_csv(index=False).encode("utf-8"),
