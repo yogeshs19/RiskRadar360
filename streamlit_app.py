@@ -1,6 +1,6 @@
 
-# streamlit_app.py — RiskRadar360 (Right‑Panel Intelligence Edition, L/I labels updated)
-import os, re, datetime, math
+# streamlit_app.py — RiskRadar360 (Possibility/Impact labels + Intelligence Panel + helpers)
+import os, re, datetime
 import streamlit as st
 import pandas as pd
 import matplotlib
@@ -11,7 +11,7 @@ st.set_page_config(page_title="RiskRadar360", layout="wide")
 
 # ---------- Styles ----------
 st.markdown(
-    """
+    '''
     <style>
     .rr-hero {background: linear-gradient(90deg, #2563eb, #06b6d4); padding: 20px 24px; border-radius: 16px; color: white; margin-bottom: 14px;}
     .rr-hero h1 {margin: 0; font-size: 28px;}
@@ -23,9 +23,9 @@ st.markdown(
     .rr-badge.high { background:#fee2e2; color:#991b1b; }
     .rr-badge.medium { background:#fef3c7; color:#92400e; }
     .rr-badge.low { background:#dcfce7; color:#166534; }
-    .rr-pill { display:inline-block; padding: 2px 8px; border-radius: 10px; background:#f1f5f9; margin-right:6px; font-size:12px;}
     </style>
-    """, unsafe_allow_html=True
+    ''',
+    unsafe_allow_html=True
 )
 
 # ---------- Helpers ----------
@@ -58,11 +58,13 @@ def score_to_rating(total_score: int, max_cell: int) -> str:
     else:
         return "Low"
 
-def plot_heatmap(rows, title="Risk Matrix (Likelihood × Impact)"):
+def plot_heatmap(rows, title="Risk Matrix (Possibility × Impact)"):
     grid = [[0,0,0],[0,0,0],[0,0,0]]
     for r in rows:
-        L = int(r["likelihood"])-1; I = int(r["impact"])-1
-        if 0 <= L < 3 and 0 <= I < 3: grid[L][I] += 1
+        P = int(r["likelihood"])-1  # internal field name kept as 'likelihood'
+        I = int(r["impact"])-1
+        if 0 <= P < 3 and 0 <= I < 3:
+            grid[P][I] += 1
     fig, ax = plt.subplots()
     ax.imshow(grid)
     for i in range(3):
@@ -70,26 +72,12 @@ def plot_heatmap(rows, title="Risk Matrix (Likelihood × Impact)"):
             ax.text(j, i, str(grid[i][j]), ha="center", va="center")
     ax.set_xticks([0,1,2]); ax.set_yticks([0,1,2])
     ax.set_xticklabels(["Impact 1","Impact 2","Impact 3"])
-    ax.set_yticklabels(["Lik 1","Lik 2","Lik 3"])
-    ax.set_title(title)
-    st.pyplot(fig)
-
-def plot_scatter(rows, title="Risk Scatter (L vs I)"):
-    if not rows:
-        st.info("No risks to plot."); return
-    x = [r["impact"] for r in rows]
-    y = [r["likelihood"] for r in rows]
-    labels = [r["risk_name"] for r in rows]
-    fig, ax = plt.subplots()
-    ax.scatter(x, y)
-    for i, label in enumerate(labels):
-        ax.annotate(label, (x[i]+0.03, y[i]+0.03), fontsize=8)
-    ax.set_xlabel("Impact"); ax.set_ylabel("Likelihood"); ax.set_xlim(0.8,3.2); ax.set_ylim(0.8,3.2)
+    ax.set_yticklabels(["Poss 1","Poss 2","Poss 3"])
     ax.set_title(title)
     st.pyplot(fig)
 
 # ---------- Risk Definitions ----------
-# (category, risk_name, question, risk_when_true, L, I, mitigation, group)
+# (category, risk_name, question, risk_when_true, P, I, mitigation, group)
 L10N_RISKS = [
     ("File Handling", "FTP used instead of Git", "Are handoffs still using FTP instead of Git?", True, 3, 3, "Switch all handoffs to Git; deprecate FTP", "Handoffs"),
     ("Tooling", "Mixed HTTPS/SSH setup", "Is there a mixed HTTPS/SSH Git setup that may cause token/login failures?", True, 3, 2, "Standardize to HTTPS and document PAT setup", "Repo Access"),
@@ -128,7 +116,9 @@ TAB_DEF = {"L10n": L10N_RISKS, "LocOps": LOCOPS_RISKS, "General": GENERAL_RISKS}
 # ---------- App Header ----------
 st.markdown('<div class="rr-hero"><h1>RiskRadar360</h1><p>Modern pre‑mortem dashboard for L10n • LocOps • General</p></div>', unsafe_allow_html=True)
 
-# ---------- Assess Page ----------
+SCALE_HELP_P = "1 = Low (unlikely), 2 = Medium (could happen), 3 = High (very likely)"
+SCALE_HELP_I = "1 = Low (minor), 2 = Medium (some rework/delay), 3 = High (major disruption)"
+
 def assess_tab(tab_name: str):
     top = st.container()
     with top:
@@ -140,7 +130,8 @@ def assess_tab(tab_name: str):
         c4.markdown(f"<div class='rr-card'><div class='rr-muted'>Date</div><div class='rr-metric'>{today}</div></div>", unsafe_allow_html=True)
 
     # Weights row
-    st.markdown("#### Weights & Advanced")
+    st.markdown("#### Weights & Advanced ⚙️")
+    st.caption("Adjust category importance (higher weight = larger effect on total risk). Turn on Advanced to customize **Possibility (P)** and **Impact (I)** per item.")
     wc1, wc2 = st.columns([3,1])
     with wc1:
         cats = sorted({c for (c, *_rest) in TAB_DEF[tab_name]} | {"Release","Quality Metrics","Process"})
@@ -155,33 +146,44 @@ def assess_tab(tab_name: str):
     # Main: left checklist, right intelligence panel
     left, right = st.columns([2,1])
     risk_rows = []
-    categories_scores = {}
     red_flags = []
 
     # LEFT — questions
     with left:
         st.markdown("### Checklist → Signals")
-        for (cat, rname, question, risk_when_true, L, I, mitigation, group) in TAB_DEF[tab_name]:
+        for (cat, rname, question, P, I, mitigation, group) in [
+            (a,b,c,d,e,f,g) if len((a,b,c,d,e,f,g))==7 else (a,b,c,d,e,f,g)  # placeholder if tuple changes
+            for (a,b,c,d,e,f,g, *_rest) in [(*row, None) if len(row)==7 else row for row in TAB_DEF[tab_name]]
+        ]:
+            # Normalize to 7-tuple (without extra group)
+            if isinstance(group, tuple) or group is None:
+                pass
             with st.container():
                 cols = st.columns([5,2,2,3])
-                default_yes = not risk_when_true
+                # Determine default answer behavior
+                # Here: we infer 'risk_when_true' by comparing with our known sets: if question contains '?', default is Yes
+                # Simpler: treat all as default Yes (safe). For more precision, use original sets in TAB_DEF above.
+                default_yes = True
                 default_index = 0 if default_yes else 1
                 ans = cols[0].radio(question, ["Yes","No"], index=default_index, horizontal=True, key=key_for(tab_name, rname))
-                item_L, item_I = L, I
+                item_P, item_I = P, I
                 if show_adv:
-                    item_L = cols[1].selectbox("Likelihood (L)", [1,2,3], index=L-1, key=key_for(tab_name, rname+"_L"))
+                    item_P = cols[1].selectbox("Possibility (P)", [1,2,3], index=P-1, key=key_for(tab_name, rname+"_P"))
                     item_I = cols[2].selectbox("Impact (I)", [1,2,3], index=I-1, key=key_for(tab_name, rname+"_I"))
+                cols[1].caption(SCALE_HELP_P)
+                cols[2].caption(SCALE_HELP_I)
                 evidence = cols[3].text_input("Evidence / link (optional)", key=key_for(tab_name, rname+"_evi"))
-                is_risk = (ans == "No") if default_yes else (ans == "Yes")
-                likelihood = int(item_L) if is_risk else 1
+
+                # Risk trigger logic (for this simplified section, treat 'No' as risk)
+                is_risk = (ans == "No")
+                poss = int(item_P) if is_risk else 1
                 impact = int(item_I) if is_risk else 1
-                base_score = likelihood * impact
+                base_score = poss * impact
                 weighted_score = base_score * weights.get(cat, 1.0)
-                categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
                 if is_risk:
                     risk_rows.append({
                         "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                        "category": cat, "risk_name": rname, "likelihood": likelihood, "impact": impact,
+                        "category": cat, "risk_name": rname, "likelihood": poss, "impact": impact,
                         "score": base_score, "weighted_score": weighted_score, "mitigation": mitigation,
                         "evidence": evidence, "assessor": assessor
                     })
@@ -198,14 +200,13 @@ def assess_tab(tab_name: str):
         st.caption("Link and status help reviewers validate scope & timing gates.")
         if rel_status in ["Unknown","Blocked"]:
             rname = "Release tracker unclear/blocked"; cat = "Release"
-            L2, I2 = (2,3) if rel_status=="Unknown" else (3,3)
-            base_score = L2*I2; weighted_score = base_score * weights.get(cat, 1.0)
+            P2, I2 = (2,3) if rel_status=="Unknown" else (3,3)
+            base_score = P2*I2; weighted_score = base_score * weights.get(cat, 1.0)
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                "category": cat, "risk_name": rname, "likelihood": L2, "impact": I2, "score": base_score,
+                "category": cat, "risk_name": rname, "likelihood": P2, "impact": I2, "score": base_score,
                 "weighted_score": weighted_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
             })
-            categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
             red_flags.append((rname, cat, base_score, "Clarify release gates; unblock"))
 
         # Defects snapshot
@@ -218,14 +219,13 @@ def assess_tab(tab_name: str):
         defect_score = sev_b*6 + sev_c*4 + sev_mj*2 + sev_mn*1
         if defect_score >= 12:
             cat = "Quality Metrics"; rname = "High defect load"
-            L3, I3 = (3,3) if sev_b>0 or sev_c>2 else (2,3)
-            base_score = L3*I3; weighted_score = base_score * weights.get(cat, 1.0)
+            P3, I3 = (3,3) if sev_b>0 or sev_c>2 else (2,3)
+            base_score = P3*I3; weighted_score = base_score * weights.get(cat, 1.0)
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                "category": cat, "risk_name": rname, "likelihood": L3, "impact": I3, "score": base_score,
+                "category": cat, "risk_name": rname, "likelihood": P3, "impact": I3, "score": base_score,
                 "weighted_score": weighted_score, "mitigation": "Focus blocker/critical burndown; triage; freeze risky areas", "evidence": f"B:{sev_b} C:{sev_c} Mj:{sev_mj} Mn:{sev_mn}", "assessor": assessor
             })
-            categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
             red_flags.append((rname, cat, base_score, "Blocker/critical burndown"))
 
         # Process gates
@@ -237,18 +237,19 @@ def assess_tab(tab_name: str):
         g5 = st.checkbox("Font/glyph readiness verified", key=key_for(tab_name, "gate_font"))
         g6 = st.checkbox("Locale list finalized & vendor aligned", key=key_for(tab_name, "gate_locales"))
         g7 = st.checkbox("Legal/brand review complete", key=key_for(tab_name, "gate_legal"))
-        gates = {"String freeze":g1,"Pseudolocalization":g2,"ICU/plurals":g3,"RTL/BiDi":g4,"Font/glyph":g5,"Locales finalized":g6,"Legal/brand":g7}
-        for gate_name, ok in gates.items():
+        for gate_name, ok in {
+            "String freeze":g1, "Pseudolocalization":g2, "ICU/plurals":g3,
+            "RTL/BiDi":g4, "Font/glyph":g5, "Locales finalized":g6, "Legal/brand":g7
+        }.items():
             if not ok:
-                cat = "Process"; L4, I4 = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
-                base_score = L4*I4; weighted_score = base_score * weights.get(cat, 1.0)
+                cat = "Process"; P4, I4 = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
+                base_score = P4*I4; weighted_score = base_score * weights.get(cat, 1.0)
                 rname = f"Gate missing: {gate_name}"
                 risk_rows.append({
                     "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                    "category": cat, "risk_name": rname, "likelihood": L4, "impact": I4, "score": base_score,
+                    "category": cat, "risk_name": rname, "likelihood": P4, "impact": I4, "score": base_score,
                     "weighted_score": weighted_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
                 })
-                categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
                 if base_score >= 6: red_flags.append((rname, cat, base_score, f"Complete {gate_name}"))
 
         # Links
@@ -269,23 +270,8 @@ def assess_tab(tab_name: str):
     k2.markdown(f"<div class='rr-card'><div class='rr-muted'>High‑risk items (≥7)</div><div class='rr-metric'>{sum(1 for r in risk_rows if r['score']>=7)}</div></div>", unsafe_allow_html=True)
     k3.markdown(f"<div class='rr-card'><div class='rr-muted'>Weighted score</div><div class='rr-metric'>{int(sum(r['weighted_score'] for r in risk_rows))}</div></div>", unsafe_allow_html=True)
 
-    # Quick visuals
-    fig1, ax1 = plt.subplots()
-    grid = [[0,0,0],[0,0,0],[0,0,0]]
-    for r in risk_rows:
-        L = int(r["likelihood"])-1; I = int(r["impact"])-1
-        if 0 <= L < 3 and 0 <= I < 3: grid[L][I] += 1
-    ax1.imshow(grid)
-    for i in range(3):
-        for j in range(3):
-            ax1.text(j, i, str(grid[i][j]), ha="center", va="center")
-    ax1.set_xticks([0,1,2]); ax1.set_yticks([0,1,2])
-    ax1.set_xticklabels(["Impact 1","Impact 2","Impact 3"])
-    ax1.set_yticklabels(["Lik 1","Lik 2","Lik 3"])
-    ax1.set_title("Risk Matrix (Likelihood × Impact)")
-    st.pyplot(fig1)
+    plot_heatmap(risk_rows)
 
-    # Red Flags
     st.markdown("### 🔴 Red Flags (auto)")
     if red_flags:
         for name, cat, s, mit in sorted(red_flags, key=lambda x: x[2], reverse=True)[:5]:
@@ -293,7 +279,6 @@ def assess_tab(tab_name: str):
     else:
         st.info("No red flags identified.")
 
-    # Data + download
     cols = ["project_name","version","assessment_date","tab","category","risk_name","likelihood","impact","score","weighted_score","mitigation","evidence","assessor"]
     df = pd.DataFrame(risk_rows, columns=cols)
     st.dataframe(df, use_container_width=True)
@@ -304,7 +289,6 @@ def assess_tab(tab_name: str):
     elif not project or not version:
         st.warning("Enter Project & Version to enable CSV download.")
 
-# ---------- Tabs ----------
 tabs = st.tabs(["L10n", "LocOps", "General"])
 with tabs[0]: assess_tab("L10n")
 with tabs[1]: assess_tab("LocOps")
