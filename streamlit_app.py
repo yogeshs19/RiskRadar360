@@ -1,5 +1,5 @@
 
-# streamlit_app.py — RiskRadar360 (Modern Dashboard Edition)
+# streamlit_app.py — RiskRadar360 (Right‑Panel Intelligence Edition)
 import os, re, datetime, math
 import streamlit as st
 import pandas as pd
@@ -9,31 +9,21 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="RiskRadar360", layout="wide")
 
-# ---------- Global Styles (no extra deps) ----------
+# ---------- Styles ----------
 st.markdown(
     """
     <style>
-    .rr-hero {
-        background: linear-gradient(90deg, #0ea5e9, #22c55e);
-        padding: 22px 28px; border-radius: 16px; color: white; margin-bottom: 14px;
-    }
-    .rr-hero h1 { margin: 0; font-size: 28px; }
-    .rr-hero p { margin: 4px 0 0 0; opacity: 0.95; }
-    .rr-card {
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 16px; padding: 16px; background: #ffffff; box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-        margin-bottom: 14px;
-    }
-    .rr-badge {
-        display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
-        background: #f1f5f9; color: #0f172a; margin-left: 8px;
-    }
-    .rr-badge.high { background: #fee2e2; color: #991b1b; }
-    .rr-badge.medium { background: #fef3c7; color: #92400e; }
-    .rr-badge.low { background: #dcfce7; color: #166534; }
-    .rr-metric { font-size: 28px; font-weight: 700; }
+    .rr-hero {background: linear-gradient(90deg, #2563eb, #06b6d4); padding: 20px 24px; border-radius: 16px; color: white; margin-bottom: 14px;}
+    .rr-hero h1 {margin: 0; font-size: 28px;}
+    .rr-hero p {margin: 6px 0 0 0; opacity: 0.95;}
+    .rr-card {border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 14px; background: #ffffff; box-shadow: 0 2px 12px rgba(0,0,0,0.04); margin-bottom: 14px;}
+    .rr-metric { font-size: 24px; font-weight: 700; }
     .rr-muted { color: #475569; }
-    .rr-subtle { color: #64748b; font-size: 13px; }
+    .rr-badge { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: 8px; }
+    .rr-badge.high { background:#fee2e2; color:#991b1b; }
+    .rr-badge.medium { background:#fef3c7; color:#92400e; }
+    .rr-badge.low { background:#dcfce7; color:#166534; }
+    .rr-pill { display:inline-block; padding: 2px 8px; border-radius: 10px; background:#f1f5f9; margin-right:6px; font-size:12px;}
     </style>
     """, unsafe_allow_html=True
 )
@@ -84,6 +74,13 @@ def plot_heatmap(rows, title="Risk Matrix (Likelihood × Impact)"):
     ax.set_title(title)
     st.pyplot(fig)
 
+def plot_defects_bar(def_counts):
+    fig, ax = plt.subplots()
+    labels = list(def_counts.keys()); values = [def_counts[k] for k in labels]
+    ax.bar(labels, values)
+    ax.set_title("Defects snapshot")
+    st.pyplot(fig)
+
 def plot_scatter(rows, title="Risk Scatter (L vs I)"):
     if not rows:
         st.info("No risks to plot."); return
@@ -99,7 +96,7 @@ def plot_scatter(rows, title="Risk Scatter (L vs I)"):
     st.pyplot(fig)
 
 # ---------- Risk Definitions ----------
-# tuple: (category, risk_name, question, risk_when_true, L, I, mitigation, group)
+# (category, risk_name, question, risk_when_true, L, I, mitigation, group)
 L10N_RISKS = [
     ("File Handling", "FTP used instead of Git", "Are handoffs still using FTP instead of Git?", True, 3, 3, "Switch all handoffs to Git; deprecate FTP", "Handoffs"),
     ("Tooling", "Mixed HTTPS/SSH setup", "Is there a mixed HTTPS/SSH Git setup that may cause token/login failures?", True, 3, 2, "Standardize to HTTPS and document PAT setup", "Repo Access"),
@@ -135,14 +132,13 @@ GENERAL_RISKS = [
 
 TAB_DEF = {"L10n": L10N_RISKS, "LocOps": LOCOPS_RISKS, "General": GENERAL_RISKS}
 
-# ---------- Sidebar Navigation ----------
-mode = st.sidebar.radio("Navigation", ["Assess", "History (soon)", "Settings"], index=0)
-st.markdown('<div class="rr-hero"><h1>RiskRadar360</h1><p>Modern pre‑mortem & risk dashboard for L10n • LocOps • General</p></div>', unsafe_allow_html=True)
+# ---------- App Header ----------
+st.markdown('<div class="rr-hero"><h1>RiskRadar360</h1><p>Modern pre‑mortem dashboard for L10n • LocOps • General</p></div>', unsafe_allow_html=True)
 
-# ---------- Assess Mode ----------
+# ---------- Assess Page ----------
 def assess_tab(tab_name: str):
-    # top cards for project entry
-    with st.container():
+    top = st.container()
+    with top:
         c1, c2, c3, c4 = st.columns([2,2,1,1])
         project = c1.text_input("Project", key=key_for(tab_name, "Project"))
         version = c2.text_input("Version", key=key_for(tab_name, "Version"))
@@ -150,10 +146,11 @@ def assess_tab(tab_name: str):
         today = datetime.date.today().strftime("%Y-%m-%d")
         c4.markdown(f"<div class='rr-card'><div class='rr-muted'>Date</div><div class='rr-metric'>{today}</div></div>", unsafe_allow_html=True)
 
-    st.markdown("### Weights & Advanced")
+    # Weights row
+    st.markdown("#### Weights & Advanced")
     wc1, wc2 = st.columns([3,1])
     with wc1:
-        cats = sorted({c for (c, *_rest) in TAB_DEF[tab_name]})
+        cats = sorted({c for (c, *_rest) in TAB_DEF[tab_name]} | {"Release","Quality Metrics","Process"})
         weights = {}
         wcols = st.columns(len(cats)) if len(cats)>0 else []
         for i, c in enumerate(cats):
@@ -162,46 +159,125 @@ def assess_tab(tab_name: str):
     with wc2:
         show_adv = st.toggle("Advanced controls", value=True, key=key_for(tab_name, "adv"))
 
-    st.markdown("### Checklist → Signals")
+    # Main: left checklist, right intelligence panel
+    left, right = st.columns([2,1])
     risk_rows = []
     categories_scores = {}
     red_flags = []
 
-    for (cat, rname, question, risk_when_true, L, I, mitigation, group) in TAB_DEF[tab_name]:
-        with st.container():
-            cols = st.columns([5,2,2,3])
-            default_yes = not risk_when_true
-            default_index = 0 if default_yes else 1
-            ans = cols[0].radio(question, ["Yes","No"], index=default_index, horizontal=True, key=key_for(tab_name, rname))
-            item_L, item_I = L, I
-            if show_adv:
-                item_L = cols[1].selectbox("L", [1,2,3], index=L-1, key=key_for(tab_name, rname+"_L"))
-                item_I = cols[2].selectbox("I", [1,2,3], index=I-1, key=key_for(tab_name, rname+"_I"))
-            evidence = cols[3].text_input("Evidence / link (optional)", key=key_for(tab_name, rname+"_evi"))
+    # LEFT — questions
+    with left:
+        st.markdown("### Checklist → Signals")
+        for (cat, rname, question, risk_when_true, L, I, mitigation, group) in TAB_DEF[tab_name]:
+            with st.container():
+                cols = st.columns([5,2,2,3])
+                default_yes = not risk_when_true
+                default_index = 0 if default_yes else 1
+                ans = cols[0].radio(question, ["Yes","No"], index=default_index, horizontal=True, key=key_for(tab_name, rname))
+                item_L, item_I = L, I
+                if show_adv:
+                    item_L = cols[1].selectbox("L", [1,2,3], index=L-1, key=key_for(tab_name, rname+"_L"))
+                    item_I = cols[2].selectbox("I", [1,2,3], index=I-1, key=key_for(tab_name, rname+"_I"))
+                evidence = cols[3].text_input("Evidence / link (optional)", key=key_for(tab_name, rname+"_evi"))
+                is_risk = (ans == "No") if default_yes else (ans == "Yes")
+                likelihood = int(item_L) if is_risk else 1
+                impact = int(item_I) if is_risk else 1
+                base_score = likelihood * impact
+                weighted_score = base_score * weights.get(cat, 1.0)
+                categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
+                if is_risk:
+                    risk_rows.append({
+                        "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
+                        "category": cat, "risk_name": rname, "likelihood": likelihood, "impact": impact,
+                        "score": base_score, "weighted_score": weighted_score, "mitigation": mitigation,
+                        "evidence": evidence, "assessor": assessor
+                    })
+                    if base_score >= 6: red_flags.append((rname, cat, base_score, mitigation))
 
-            is_risk = (ans == "No") if default_yes else (ans == "Yes")
-            likelihood = int(item_L) if is_risk else 1
-            impact = int(item_I) if is_risk else 1
-            base_score = likelihood * impact
+    # RIGHT — intelligence panel
+    with right:
+        st.markdown("### Intelligence Panel")
+        # Release Tracker (ValueEdge or similar)
+        st.markdown("##### Release tracker")
+        rel_url = st.text_input("Release link (ValueEdge / Jira / other)", key=key_for(tab_name, "rel_url"))
+        rel_status = st.selectbox("Gate status", ["Unknown","Draft","In progress","Ready","Blocked"], index=0, key=key_for(tab_name, "rel_status"))
+        rel_date = st.date_input("Planned release date", key=key_for(tab_name, "rel_date"))
+        st.caption("Link and status help reviewers validate scope & timing gates.")
+        if rel_status in ["Unknown","Blocked"]:
+            # add risk
+            rname = "Release tracker unclear/blocked"
+            cat = "Release"
+            L, I = (2,3) if rel_status=="Unknown" else (3,3)
+            base_score = L*I
             weighted_score = base_score * weights.get(cat, 1.0)
+            risk_rows.append({
+                "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
+                "category": cat, "risk_name": rname, "likelihood": L, "impact": I, "score": base_score,
+                "weighted_score": weighted_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
+            })
             categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
+            red_flags.append((rname, cat, base_score, "Clarify release gates; unblock"))
 
-            if is_risk:
+        # Defects snapshot
+        st.markdown("##### Ongoing defects")
+        dcols = st.columns(4)
+        sev_b = dcols[0].number_input("Blocker", 0, 999, 0, key=key_for(tab_name, "def_blocker"))
+        sev_c = dcols[1].number_input("Critical", 0, 999, 0, key=key_for(tab_name, "def_critical"))
+        sev_mj = dcols[2].number_input("Major", 0, 999, 0, key=key_for(tab_name, "def_major"))
+        sev_mn = dcols[3].number_input("Minor", 0, 999, 0, key=key_for(tab_name, "def_minor"))
+        def_counts = {"Blocker":sev_b, "Critical":sev_c, "Major":sev_mj, "Minor":sev_mn}
+        plot_defects_bar(def_counts)
+        defect_score = sev_b*6 + sev_c*4 + sev_mj*2 + sev_mn*1
+        if defect_score >= 12:
+            cat = "Quality Metrics"; rname = "High defect load"
+            L, I = (3,3) if sev_b>0 or sev_c>2 else (2,3)
+            base_score = L*I; weighted_score = base_score * weights.get(cat, 1.0)
+            risk_rows.append({
+                "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
+                "category": cat, "risk_name": rname, "likelihood": L, "impact": I, "score": base_score,
+                "weighted_score": weighted_score, "mitigation": "Focus on blocker/critical burndown; triage; freeze risky areas", "evidence": str(def_counts), "assessor": assessor
+            })
+            categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
+            red_flags.append((rname, cat, base_score, "Blocker/critical burndown"))
+
+        # Process clarifications / gates
+        st.markdown("##### Process gates")
+        g1 = st.checkbox("String freeze declared", key=key_for(tab_name, "gate_freeze"))
+        g2 = st.checkbox("Pseudolocalization passed", key=key_for(tab_name, "gate_pseudo"))
+        g3 = st.checkbox("ICU/plurals coverage confirmed", key=key_for(tab_name, "gate_icu"))
+        g4 = st.checkbox("RTL/BiDi support validated (if applicable)", key=key_for(tab_name, "gate_bidi"))
+        g5 = st.checkbox("Font/glyph readiness verified", key=key_for(tab_name, "gate_font"))
+        g6 = st.checkbox("Locale list finalized & vendor aligned", key=key_for(tab_name, "gate_locales"))
+        g7 = st.checkbox("Legal/brand review complete", key=key_for(tab_name, "gate_legal"))
+        # any missing gate => risk
+        gates = {"String freeze":g1,"Pseudolocalization":g2,"ICU/plurals":g3,"RTL/BiDi":g4,"Font/glyph":g5,"Locales finalized":g6,"Legal/brand":g7}
+        for gate_name, ok in gates.items():
+            if not ok:
+                cat = "Process"
+                rname = f"Gate missing: {gate_name}"
+                L, I = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
+                base_score = L*I; weighted_score = base_score * weights.get(cat, 1.0)
                 risk_rows.append({
                     "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
-                    "category": cat, "risk_name": rname, "likelihood": likelihood, "impact": impact,
-                    "score": base_score, "weighted_score": weighted_score, "mitigation": mitigation,
-                    "evidence": evidence, "assessor": assessor
+                    "category": cat, "risk_name": rname, "likelihood": L, "impact": I, "score": base_score,
+                    "weighted_score": weighted_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
                 })
-                if base_score >= 6:  # fast red flag
-                    red_flags.append((rname, cat, base_score, mitigation))
+                categories_scores[cat] = categories_scores.get(cat, 0) + weighted_score
+                if base_score >= 6: red_flags.append((rname, cat, base_score, f"Complete {gate_name}"))
 
-    # KPIs & charts
+        # Useful links
+        st.markdown("##### Links & artifacts")
+        st.text_input("Git/Gerrit repo URL", key=key_for(tab_name, "link_repo"))
+        st.text_input("CI pipeline URL", key=key_for(tab_name, "link_ci"))
+        st.text_input("Spec/Confluence URL", key=key_for(tab_name, "link_spec"))
+
+    # Summary & charts
+    st.markdown("---")
     total_score = sum(r["score"] for r in risk_rows)
     max_cell = max((r["score"] for r in risk_rows), default=0)
     rating = score_to_rating(total_score, max_cell)
-    badge = f"<span class='rr-badge {rating.lower()}'>{rating}</span>"
 
+    badge = f"<span class='rr-badge {rating.lower()}'>{rating}</span>"
     st.markdown(f"### Summary {badge}", unsafe_allow_html=True)
     k1, k2, k3 = st.columns(3)
     k1.markdown(f"<div class='rr-card'><div class='rr-muted'>Overall rating</div><div class='rr-metric'>{rating}</div></div>", unsafe_allow_html=True)
@@ -219,28 +295,20 @@ def assess_tab(tab_name: str):
     else:
         st.info("No red flags identified.")
 
-    # Table + Save
+    # Data + download
     cols = ["project_name","version","assessment_date","tab","category","risk_name","likelihood","impact","score","weighted_score","mitigation","evidence","assessor"]
     df = pd.DataFrame(risk_rows, columns=cols)
     st.dataframe(df, use_container_width=True)
 
-    if project and version:
+    if project and version and not df.empty:
         path = save_results_csv(project, version, tab_name, df)
         st.download_button("⬇️ Download CSV", data=df.to_csv(index=False).encode("utf-8"),
                            file_name=os.path.basename(path), mime="text/csv", key=key_for(tab_name, "dl"))
-    else:
+    elif not project or not version:
         st.warning("Enter Project & Version to enable CSV download.")
 
-if mode == "Assess":
-    tabs = st.tabs(["L10n", "LocOps", "General"])
-    with tabs[0]: assess_tab("L10n")
-    with tabs[1]: assess_tab("LocOps")
-    with tabs[2]: assess_tab("General")
-
-elif mode == "History (soon)":
-    st.markdown("#### History")
-    st.info("Version trends, per‑category charts and comparisons will appear here.")
-
-else:
-    st.markdown("#### Settings")
-    st.info("Future: thresholds, presets, and integrations (Git push, Google Sheets, etc.).")
+# ---------- Tabs ----------
+tabs = st.tabs(["L10n", "LocOps", "General"])
+with tabs[0]: assess_tab("L10n")
+with tabs[1]: assess_tab("LocOps")
+with tabs[2]: assess_tab("General")
