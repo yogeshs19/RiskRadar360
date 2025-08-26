@@ -1,4 +1,3 @@
-
 # streamlit_app.py — RiskRadar360 (final fixed version)
 import os, re, datetime, math
 import streamlit as st
@@ -104,8 +103,7 @@ def assess_tab(tab_name: str):
         project = c1.text_input("Project Name", key=key(tab_name, "ProjectName"))
         version = c2.text_input("Version / Release", key=key(tab_name, "Version"))
         date_str = datetime.date.today().strftime("%Y-%m-%d")
-        c3.markdown(f"**Date**  
-{date_str}")
+        c3.markdown(f"**Date**\n{date_str}")
         assessor = st.text_input("Assessor (optional)", "", key=key(tab_name, "Assessor"))
         notes = st.text_area("Notes (optional)", "", key=key(tab_name, "Notes"))
         st.markdown("---")
