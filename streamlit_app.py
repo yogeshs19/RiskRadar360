@@ -1,5 +1,5 @@
 
-# streamlit_app.py — RiskRadar360 (Possibility/Impact labels + Intelligence Panel + helpers) — FIXED LOOP
+# streamlit_app.py — RiskRadar360 (LocOps tool-specific edition + Possibility/Impact + Intelligence Panel)
 import os, re, datetime
 import streamlit as st
 import pandas as pd
@@ -61,7 +61,7 @@ def score_to_rating(total_score: int, max_cell: int) -> str:
 def plot_heatmap(rows, title="Risk Matrix (Possibility × Impact)"):
     grid = [[0,0,0],[0,0,0],[0,0,0]]
     for r in rows:
-        P = int(r["likelihood"])-1  # internal field name kept as 'likelihood'
+        P = int(r["likelihood"])-1  # internal field kept as 'likelihood'
         I = int(r["impact"])-1
         if 0 <= P < 3 and 0 <= I < 3:
             grid[P][I] += 1
@@ -77,7 +77,7 @@ def plot_heatmap(rows, title="Risk Matrix (Possibility × Impact)"):
     st.pyplot(fig)
 
 # ---------- Risk Definitions ----------
-# (category, risk_name, question, risk_when_true, P, I, mitigation, group)
+# tuple: (category, risk_name, question, risk_when_true, P, I, mitigation, group)
 L10N_RISKS = [
     ("File Handling", "FTP used instead of Git", "Are handoffs still using FTP instead of Git?", True, 3, 3, "Switch all handoffs to Git; deprecate FTP", "Handoffs"),
     ("Tooling", "Mixed HTTPS/SSH setup", "Is there a mixed HTTPS/SSH Git setup that may cause token/login failures?", True, 3, 2, "Standardize to HTTPS and document PAT setup", "Repo Access"),
@@ -90,16 +90,30 @@ L10N_RISKS = [
     ("Tooling", "ezL10n mapping absent", "Is the Git repo mapped for ezL10n automation?", False, 2, 3, "Map repo to ezL10n; validate jobs", "Automation"),
 ]
 
+# *** UPDATED: LocOps risks mapped to your internal toolchain ***
 LOCOPS_RISKS = [
-    ("Tooling", "Pipeline instability", "Have pipelines been ≥95% green in the last 14 days?", False, 2, 3, "Blue/green runners; staggered rollout; rollback plan", "CI Health"),
-    ("Tooling", "License server outage risk", "Are license servers monitored with alerting?", False, 2, 3, "Add HA; monitoring; vendor support", "Infra"),
-    ("Tooling", "Secrets management gaps", "Are credentials rotated and stored in a vault?", False, 2, 3, "Use secrets vault; rotation policy", "Security"),
-    ("Tooling", "Parser regressions", "Are parser/plugin versions pinned with canary tests?", False, 2, 2, "Pin versions; canary pipelines; rollback artifact", "Build/Parser"),
-    ("Tooling", "Staging/server availability", "Is staging/artifact server availability monitored?", False, 2, 3, "SLOs; uptime monitoring; escalation", "Infra"),
-    ("Resources", "Agent env drift", "Are build agents standardized (toolchain pinned)?", False, 2, 2, "Golden images; config mgmt; audits", "CI Health"),
-    ("Knowledge", "Guardrails missing", "Are MR templates and required approvals enforced?", False, 2, 3, "Templates; protected branches; reviewers", "Process/Policy"),
-    ("Knowledge", "Backup/restore gaps", "Are backups verified with periodic restore tests?", False, 2, 3, "Nightly backups; quarterly restore drills", "Infra"),
-    ("Tooling", "Monitoring SLAs", "Are monitoring SLAs (MTTD/MTTR) defined and met?", False, 2, 2, "Define SLAs; alert tuning; postmortems", "SRE/Monitoring"),
+    # ezL10n
+    ("Automation", "ezL10n repo mapping drift", "Is ezL10n mapping up-to-date for this repo & branch?", False, 3, 3, "Sync mappings to current branches; validate job paths", "ezL10n"),
+    ("Automation", "ezL10n job health", "Have the last 10 ezL10n jobs succeeded (no chronic failures)?", False, 2, 3, "Fix chronic failures; add canary job; alerting", "ezL10n"),
+    # SourceChecker
+    ("Quality Gates", "SourceChecker coverage gaps", "Is SourceChecker enforced for all products in scope?", False, 2, 3, "Add SourceChecker to gate; block on failure", "SourceChecker"),
+    ("Quality Gates", "Source placeholder risk", "Do SourceChecker rules include placeholder/escape checks?", False, 2, 2, "Enable placeholder/escape validations", "SourceChecker"),
+    # TransChecker
+    ("Quality Gates", "TransChecker not enforced", "Is TransChecker required for vendor handback?", False, 2, 3, "Run TransChecker pre-HB; reject failing packages", "TransChecker"),
+    ("Quality Gates", "TM/term consistency checks", "Are TM & terminology consistency checks part of handback?", False, 2, 2, "Integrate term rules; update glossaries", "TransChecker"),
+    # DocOps
+    ("DocOps", "DocOps staging failures", "Has the DocOps pipeline been green for staging in the last 2 weeks?", False, 2, 3, "Stabilize staging jobs; retry policy; alerts", "DocOps"),
+    ("DocOps", "Prod publish risk", "Is production publish tested with rollback artifacts?", False, 2, 3, "Add rollback build; run preflight", "DocOps"),
+    # SCA (i18n static analysis)
+    ("SCA", "i18n SCA skipped", "Is the i18n static analysis part of CI for new features?", False, 2, 3, "Add SCA job; enforce before merge", "SCA"),
+    ("SCA", "Hardcoded strings risk", "Are hardcoded string detections triaged within SLA?", False, 2, 2, "Triage dashboard; fix SLA; educate devs", "SCA"),
+    # SnapGen (screenshots)
+    ("Screens", "SnapGen outdated", "Is the screenshot generator aligned to current builds & locales?", False, 2, 2, "Update SnapGen configs; smoke test", "SnapGen"),
+    ("Screens", "Vendor screenshot validation", "Is vendor LQA process integrated with SnapGen output?", False, 2, 2, "Provide annotated packs; define acceptance", "SnapGen"),
+    # Infra / Secrets / License
+    ("Infra", "License server SPOF", "Are Passolo/MT license servers redundant & monitored?", False, 2, 3, "Add HA; monitoring; vendor support plan", "Licenses"),
+    ("Security", "Secrets/token rotation overdue", "Are CI tokens & vendor creds rotated per policy?", False, 2, 3, "Use secrets vault; rotate; audit", "Secrets"),
+    ("CI Runners", "Agent env drift", "Are build agents pinned (toolchain versions) & reproducible?", False, 2, 2, "Golden images; config mgmt; audits", "Runners"),
 ]
 
 GENERAL_RISKS = [
@@ -159,7 +173,6 @@ def assess_tab(tab_name: str):
                 ans = cols[0].radio(question, ["Yes","No"], index=default_index, horizontal=True, key=key_for(tab_name, rname))
                 item_P, item_I = P, I
                 if show_adv:
-                    # ensure indices are within 0..2
                     p_idx = max(0, min(2, int(P)-1))
                     i_idx = max(0, min(2, int(I)-1))
                     item_P = cols[1].selectbox("Possibility (P)", [1,2,3], index=p_idx, key=key_for(tab_name, rname+"_P"))
@@ -198,11 +211,12 @@ def assess_tab(tab_name: str):
         if rel_status in ["Unknown","Blocked"]:
             rname = "Release tracker unclear/blocked"; cat = "Release"
             P2, I2 = (2,3) if rel_status=="Unknown" else (3,3)
-            base_score = P2*I2; 
+            base_score = P2*I2
+            weighted_score = base_score * weights.get(cat, 1.0)
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
                 "category": cat, "risk_name": rname, "likelihood": P2, "impact": I2, "score": base_score,
-                "weighted_score": base_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
+                "weighted_score": weighted_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
             })
             red_flags.append((rname, cat, base_score, "Clarify release gates; unblock"))
 
@@ -217,11 +231,12 @@ def assess_tab(tab_name: str):
         if defect_score >= 12:
             cat = "Quality Metrics"; rname = "High defect load"
             P3, I3 = (3,3) if sev_b>0 or sev_c>2 else (2,3)
-            base_score = P3*I3; 
+            base_score = P3*I3
+            weighted_score = base_score * weights.get(cat, 1.0)
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
                 "category": cat, "risk_name": rname, "likelihood": P3, "impact": I3, "score": base_score,
-                "weighted_score": base_score, "mitigation": "Focus blocker/critical burndown; triage; freeze risky areas", "evidence": f"B:{sev_b} C:{sev_c} Mj:{sev_mj} Mn:{sev_mn}", "assessor": assessor
+                "weighted_score": weighted_score, "mitigation": "Focus blocker/critical burndown; triage; freeze risky areas", "evidence": f"B:{sev_b} C:{sev_c} Mj:{sev_mj} Mn:{sev_mn}", "assessor": assessor
             })
             red_flags.append((rname, cat, base_score, "Blocker/critical burndown"))
 
@@ -240,12 +255,13 @@ def assess_tab(tab_name: str):
         }.items():
             if not ok:
                 cat = "Process"; P4, I4 = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
-                base_score = P4*I4; 
+                base_score = P4*I4
+                weighted_score = base_score * weights.get(cat, 1.0)
                 rname = f"Gate missing: {gate_name}"
                 risk_rows.append({
                     "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
                     "category": cat, "risk_name": rname, "likelihood": P4, "impact": I4, "score": base_score,
-                    "weighted_score": base_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
+                    "weighted_score": weighted_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
                 })
                 if base_score >= 6: red_flags.append((rname, cat, base_score, f"Complete {gate_name}"))
 
