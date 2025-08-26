@@ -1,5 +1,5 @@
 
-# streamlit_app.py — RiskRadar360 (Possibility/Impact labels + Intelligence Panel + helpers)
+# streamlit_app.py — RiskRadar360 (Possibility/Impact labels + Intelligence Panel + helpers) — FIXED LOOP
 import os, re, datetime
 import streamlit as st
 import pandas as pd
@@ -151,31 +151,28 @@ def assess_tab(tab_name: str):
     # LEFT — questions
     with left:
         st.markdown("### Checklist → Signals")
-        for (cat, rname, question, P, I, mitigation, group) in [
-            (a,b,c,d,e,f,g) if len((a,b,c,d,e,f,g))==7 else (a,b,c,d,e,f,g)  # placeholder if tuple changes
-            for (a,b,c,d,e,f,g, *_rest) in [(*row, None) if len(row)==7 else row for row in TAB_DEF[tab_name]]
-        ]:
-            # Normalize to 7-tuple (without extra group)
-            if isinstance(group, tuple) or group is None:
-                pass
+        for (cat, rname, question, risk_when_true, P, I, mitigation, group) in TAB_DEF[tab_name]:
             with st.container():
                 cols = st.columns([5,2,2,3])
-                # Determine default answer behavior
-                # Here: we infer 'risk_when_true' by comparing with our known sets: if question contains '?', default is Yes
-                # Simpler: treat all as default Yes (safe). For more precision, use original sets in TAB_DEF above.
-                default_yes = True
+                default_yes = not risk_when_true
                 default_index = 0 if default_yes else 1
                 ans = cols[0].radio(question, ["Yes","No"], index=default_index, horizontal=True, key=key_for(tab_name, rname))
                 item_P, item_I = P, I
                 if show_adv:
-                    item_P = cols[1].selectbox("Possibility (P)", [1,2,3], index=P-1, key=key_for(tab_name, rname+"_P"))
-                    item_I = cols[2].selectbox("Impact (I)", [1,2,3], index=I-1, key=key_for(tab_name, rname+"_I"))
-                cols[1].caption(SCALE_HELP_P)
-                cols[2].caption(SCALE_HELP_I)
+                    # ensure indices are within 0..2
+                    p_idx = max(0, min(2, int(P)-1))
+                    i_idx = max(0, min(2, int(I)-1))
+                    item_P = cols[1].selectbox("Possibility (P)", [1,2,3], index=p_idx, key=key_for(tab_name, rname+"_P"))
+                    item_I = cols[2].selectbox("Impact (I)", [1,2,3], index=i_idx, key=key_for(tab_name, rname+"_I"))
+                    cols[1].caption(SCALE_HELP_P)
+                    cols[2].caption(SCALE_HELP_I)
+                else:
+                    cols[1].caption(SCALE_HELP_P)
+                    cols[2].caption(SCALE_HELP_I)
+
                 evidence = cols[3].text_input("Evidence / link (optional)", key=key_for(tab_name, rname+"_evi"))
 
-                # Risk trigger logic (for this simplified section, treat 'No' as risk)
-                is_risk = (ans == "No")
+                is_risk = (ans == "No") if default_yes else (ans == "Yes")
                 poss = int(item_P) if is_risk else 1
                 impact = int(item_I) if is_risk else 1
                 base_score = poss * impact
@@ -201,11 +198,11 @@ def assess_tab(tab_name: str):
         if rel_status in ["Unknown","Blocked"]:
             rname = "Release tracker unclear/blocked"; cat = "Release"
             P2, I2 = (2,3) if rel_status=="Unknown" else (3,3)
-            base_score = P2*I2; weighted_score = base_score * weights.get(cat, 1.0)
+            base_score = P2*I2; 
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
                 "category": cat, "risk_name": rname, "likelihood": P2, "impact": I2, "score": base_score,
-                "weighted_score": weighted_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
+                "weighted_score": base_score, "mitigation": "Clarify release scope/gates; unblock owners", "evidence": rel_url, "assessor": assessor
             })
             red_flags.append((rname, cat, base_score, "Clarify release gates; unblock"))
 
@@ -220,11 +217,11 @@ def assess_tab(tab_name: str):
         if defect_score >= 12:
             cat = "Quality Metrics"; rname = "High defect load"
             P3, I3 = (3,3) if sev_b>0 or sev_c>2 else (2,3)
-            base_score = P3*I3; weighted_score = base_score * weights.get(cat, 1.0)
+            base_score = P3*I3; 
             risk_rows.append({
                 "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
                 "category": cat, "risk_name": rname, "likelihood": P3, "impact": I3, "score": base_score,
-                "weighted_score": weighted_score, "mitigation": "Focus blocker/critical burndown; triage; freeze risky areas", "evidence": f"B:{sev_b} C:{sev_c} Mj:{sev_mj} Mn:{sev_mn}", "assessor": assessor
+                "weighted_score": base_score, "mitigation": "Focus blocker/critical burndown; triage; freeze risky areas", "evidence": f"B:{sev_b} C:{sev_c} Mj:{sev_mj} Mn:{sev_mn}", "assessor": assessor
             })
             red_flags.append((rname, cat, base_score, "Blocker/critical burndown"))
 
@@ -243,12 +240,12 @@ def assess_tab(tab_name: str):
         }.items():
             if not ok:
                 cat = "Process"; P4, I4 = (2,2) if gate_name in ["Font/glyph","Locales finalized"] else (2,3)
-                base_score = P4*I4; weighted_score = base_score * weights.get(cat, 1.0)
+                base_score = P4*I4; 
                 rname = f"Gate missing: {gate_name}"
                 risk_rows.append({
                     "project_name": project, "version": version, "assessment_date": today, "tab": tab_name,
                     "category": cat, "risk_name": rname, "likelihood": P4, "impact": I4, "score": base_score,
-                    "weighted_score": weighted_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
+                    "weighted_score": base_score, "mitigation": f"Complete gate: {gate_name}", "evidence": "", "assessor": assessor
                 })
                 if base_score >= 6: red_flags.append((rname, cat, base_score, f"Complete {gate_name}"))
 
